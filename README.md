@@ -48,21 +48,21 @@ Aplikasi **AGRIFLOW (Allimation)** hadir sebagai antarmuka cerdas terpadu yang m
 ## 🌐 Arsitektur Komunikasi IoT (HiveMQ Cloud & ESP32)
 
 ```mermaid
-graph LR
-    subgraph Lahan Pertanian (Brebes)
-        S1[Sensor Tanah 1] --> ESP32[Mikrokontroler ESP32]
-        S2[Sensor Tanah 2] --> ESP32
-        S3[Sensor Tanah 3] --> ESP32
-        DHT[Sensor DHT11] --> ESP32
-        ESP32 -->|GPIO Relay| PUMP[Pompa Air Irigasi]
+flowchart LR
+    subgraph Farm ["Lahan Pertanian (Brebes)"]
+        S1["Sensor Tanah 1"] --> ESP32["Mikrokontroler ESP32"]
+        S2["Sensor Tanah 2"] --> ESP32
+        S3["Sensor Tanah 3"] --> ESP32
+        DHT["Sensor DHT11"] --> ESP32
+        ESP32 -->|GPIO Relay| PUMP["Pompa Air Irigasi"]
     end
 
-    subgraph Cloud Broker
-        ESP32 -->|TLS Port 8883| BROKER((HiveMQ Cloud Serverless))
+    subgraph Cloud ["Cloud Broker"]
+        ESP32 -->|TLS Port 8883| BROKER[("HiveMQ Cloud Serverless")]
     end
 
-    subgraph Mobile User
-        BROKER -->|Sub: skripsi/nizar/#| APP[Aplikasi Flutter AGRIFLOW]
+    subgraph Mobile ["Mobile User"]
+        BROKER -->|Sub: skripsi/nizar/#| APP["Aplikasi Flutter AGRIFLOW"]
         APP -->|Pub: skripsi/nizar/manual| BROKER
     end
 ```
