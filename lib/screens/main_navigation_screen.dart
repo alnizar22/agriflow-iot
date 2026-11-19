@@ -38,7 +38,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final moisture = provider.currentData.soilMoisture;
     final isPumpOn = provider.currentData.isPumpOn;
 
-    if (hasData && hasSoilData && moisture < 60.0 && !isPumpOn && !_hasShownCriticalDialog) {
+    if (hasData &&
+        hasSoilData &&
+        moisture < 60.0 &&
+        !isPumpOn &&
+        !_hasShownCriticalDialog) {
       _hasShownCriticalDialog = true;
       PopUpAlert.showCriticalMoistureDialog(
         context: context,
@@ -76,7 +80,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         final isPumpOn = provider.currentData.isPumpOn;
 
         // Pengecekan kelembapan < 60% untuk pemicu Pop-Up Alert (Hanya jika data tanah valid telah diterima, di Beranda, dan saat pompa mati)
-        if (_currentIndex == 0 && hasData && hasSoilData && moisture < 60.0 && !isPumpOn) {
+        if (_currentIndex == 0 &&
+            hasData &&
+            hasSoilData &&
+            moisture < 60.0 &&
+            !isPumpOn) {
           if (!_hasShownCriticalDialog) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!_hasShownCriticalDialog &&
@@ -115,10 +123,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         }
 
         return Scaffold(
-          body: IndexedStack(
-            index: _currentIndex,
-            children: _screens,
-          ),
+          body: IndexedStack(index: _currentIndex, children: _screens),
           bottomNavigationBar: Container(
             decoration: const BoxDecoration(
               color: Colors.white,
