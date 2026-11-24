@@ -78,19 +78,29 @@ flowchart LR
 
 ---
 
-## 📱 Tampilan Antarmuka Aplikasi (Mockup Visual)
+## 📱 Tampilan Antarmuka Aplikasi (Mockup Visual & Hasil Pengujian)
 
 <div align="center">
 
-| 1. Beranda (Hardware Standby) | 2. Kontrol Pompa (Siaga) | 3. Pompa Aktif Menyiram |
+| 1. Beranda (Hardware Standby) | 2. Monitoring 3 Titik Sensor | 3. Respon Data (Simulasi Aktif) |
 | :---: | :---: | :---: |
-| <img src="docs/images/01_beranda_menunggu_hardware.png" width="240"/> | <img src="docs/images/02_kontrol_siaga.png" width="240"/> | <img src="docs/images/03_kontrol_siram_aktif.png" width="240"/> |
-| *Deteksi status prototype & broker online* | *Segmented switch & tombol pompa siaga* | *Feedback 'SIRAM' terpublish ke prototype* |
+| <img src="docs/images/01_beranda_menunggu_hardware.png" width="240"/> | <img src="docs/images/01b_beranda_detail_3sensor_standby.png" width="240"/> | <img src="docs/images/06_dashboard_siram_simulasi.png" width="240"/> |
+| *Deteksi prototype standby & status siaga tanpa data dummy* | *Rincian kelembapan 3 titik media tanah berbeda* | *Respon visual dashboard saat data telemetri masuk* |
 
-| 4. Notifikasi Matikan Pompa | 5. Riwayat & Tren Telemetri | 6. Pop-Up Peringatan Kritis |
+| 4. Detail 3 Sensor (Nilai Riil) | 5. Kendali Pompa (Siaga) | 6. Pompa Aktif Menyiram |
 | :---: | :---: | :---: |
-| <img src="docs/images/04_kontrol_matikan_pompa.png" width="240"/> | <img src="docs/images/05_riwayat_telemetri.png" width="240"/> | <img src="docs/images/07_popup_peringatan_kritis.png" width="240"/> |
-| *Perintah matikan pompa berhasil terpublish* | *Grafik fluktuasi kelembapan real-time* | *Alert otomatis saat kelembapan < 60%* |
+| <img src="docs/images/06b_dashboard_simulasi_3sensor.png" width="240"/> | <img src="docs/images/02_kontrol_siaga.png" width="240"/> | <img src="docs/images/03_kontrol_siram_aktif.png" width="240"/> |
+| *Validasi pembacaan ADC dan persentase tiap sensor* | *Saklar mode & tombol kendali melingkar hijau* | *Feedback visual 'SIRAM' terpublish ke prototype* |
+
+| 7. Riwayat & Tren Telemetri | 8. Alert Kelembapan Kritis (< 60%) | 9. Dialog Gangguan Sinyal / LWT |
+| :---: | :---: | :---: |
+| <img src="docs/images/05_riwayat_telemetri.png" width="240"/> | <img src="docs/images/07_popup_peringatan_kritis.png" width="240"/> | <img src="docs/images/08_dialog_gangguan_sinyal.png" width="240"/> |
+| *Grafik fluktuasi fl_chart real-time dengan batas ideal* | *Pop-up otomatis saat tanah kering (<60%) + tombol siram* | *Deteksi otomatis putus koneksi ESP32 (LWT / timeout)* |
+
+| 10. Profil Akademik Pengembang |
+| :---: |
+| <img src="docs/images/09_dialog_profil_pengembang.png" width="240"/> |
+| *Identitas peneliti Skripsi & akses konfigurasi broker* |
 
 </div>
 
