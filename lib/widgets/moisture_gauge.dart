@@ -156,7 +156,7 @@ class MoistureGauge extends StatelessWidget {
                 const SizedBox(width: 10),
                 const Expanded(
                   child: Text(
-                    'Rentang Ideal Bawang (60% - 75%)',
+                    'Rentang Ideal Bawang (60% - 80%)',
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,

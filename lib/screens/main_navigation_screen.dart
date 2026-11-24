@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/irrigation_provider.dart';
@@ -16,6 +17,7 @@ class MainNavigationScreen extends StatefulWidget {
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _currentIndex = 0;
   bool _hasShownCriticalDialog = false;
+  StreamSubscription<String>? _disruptionSubscription;
 
   final List<Widget> _screens = const [
     DashboardScreen(), // Tab 0: Beranda (Mockup 1)
@@ -27,8 +29,24 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      final provider = Provider.of<IrrigationProvider>(context, listen: false);
+      _disruptionSubscription = provider.disruptionAlertStream.listen((reason) {
+        if (mounted) {
+          PopUpAlert.showSignalDisruptionDialog(
+            context: context,
+            message: reason,
+            onReconnect: () => provider.connectMqtt(),
+          );
+        }
+      });
       _checkCriticalMoistureAlert();
     });
+  }
+
+  @override
+  void dispose() {
+    _disruptionSubscription?.cancel();
+    super.dispose();
   }
 
   void _checkCriticalMoistureAlert() {
@@ -37,9 +55,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final hasSoilData = provider.currentData.hasSoilData;
     final moisture = provider.currentData.soilMoisture;
     final isPumpOn = provider.currentData.isPumpOn;
+    final isOnline = provider.isDeviceOnline;
 
     if (hasData &&
         hasSoilData &&
+        isOnline &&
         moisture < 60.0 &&
         !isPumpOn &&
         !_hasShownCriticalDialog) {
@@ -78,11 +98,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         final hasSoilData = provider.currentData.hasSoilData;
         final moisture = provider.currentData.soilMoisture;
         final isPumpOn = provider.currentData.isPumpOn;
+        final isOnline = provider.isDeviceOnline;
 
-        // Pengecekan kelembapan < 60% untuk pemicu Pop-Up Alert (Hanya jika data tanah valid telah diterima, di Beranda, dan saat pompa mati)
+        // Pengecekan kelembapan < 60% untuk pemicu Pop-Up Alert (Hanya jika alat online, data tanah valid, di Beranda, dan pompa mati)
         if (_currentIndex == 0 &&
             hasData &&
             hasSoilData &&
+            isOnline &&
             moisture < 60.0 &&
             !isPumpOn) {
           if (!_hasShownCriticalDialog) {
@@ -117,8 +139,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               }
             });
           }
-        } else if (!hasData || !hasSoilData || moisture >= 60.0 || isPumpOn) {
-          // Jika belum ada data tanah, sudah optimal, atau pompa sedang menyiram, reset dialog flag
+        } else if (!hasData || !hasSoilData || !isOnline || moisture >= 60.0 || isPumpOn) {
+          // Jika belum ada data tanah, offline, sudah optimal, atau pompa sedang menyiram, reset dialog flag
           _hasShownCriticalDialog = false;
         }
 

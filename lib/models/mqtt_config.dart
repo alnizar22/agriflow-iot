@@ -4,6 +4,8 @@ class MqttConfig {
   final String clientId;
   final String telemetryTopic;
   final String controlTopic;
+  final String statusTopic;
+  final String soilDetailTopic;
   final String username;
   final String password;
   final bool useSecure;
@@ -14,10 +16,14 @@ class MqttConfig {
     String? clientId,
     this.telemetryTopic = 'skripsi/nizar/soil',
     this.controlTopic = 'skripsi/nizar/manual',
+    this.statusTopic = 'skripsi/nizar/status',
+    this.soilDetailTopic = 'skripsi/nizar/soil_detail',
     this.username = 'nizar2209',
     this.password = 'saputra2209',
     this.useSecure = true,
-  }) : clientId = clientId ?? 'FlutterApp_Nizar';
+  }) : clientId = (clientId != null && clientId.isNotEmpty)
+            ? clientId
+            : 'FlutterApp_Nizar_${DateTime.now().millisecondsSinceEpoch % 100000}';
 
   Map<String, dynamic> toJson() {
     return {
@@ -26,6 +32,8 @@ class MqttConfig {
       'clientId': clientId,
       'telemetryTopic': telemetryTopic,
       'controlTopic': controlTopic,
+      'statusTopic': statusTopic,
+      'soilDetailTopic': soilDetailTopic,
       'username': username,
       'password': password,
       'useSecure': useSecure,
@@ -39,6 +47,8 @@ class MqttConfig {
       clientId: json['clientId'],
       telemetryTopic: json['telemetryTopic'] ?? 'skripsi/nizar/soil',
       controlTopic: json['controlTopic'] ?? 'skripsi/nizar/manual',
+      statusTopic: json['statusTopic'] ?? 'skripsi/nizar/status',
+      soilDetailTopic: json['soilDetailTopic'] ?? 'skripsi/nizar/soil_detail',
       username: json['username'] ?? 'nizar2209',
       password: json['password'] ?? 'saputra2209',
       useSecure: json['useSecure'] ?? true,
@@ -51,6 +61,8 @@ class MqttConfig {
     String? clientId,
     String? telemetryTopic,
     String? controlTopic,
+    String? statusTopic,
+    String? soilDetailTopic,
     String? username,
     String? password,
     bool? useSecure,
@@ -61,6 +73,8 @@ class MqttConfig {
       clientId: clientId ?? this.clientId,
       telemetryTopic: telemetryTopic ?? this.telemetryTopic,
       controlTopic: controlTopic ?? this.controlTopic,
+      statusTopic: statusTopic ?? this.statusTopic,
+      soilDetailTopic: soilDetailTopic ?? this.soilDetailTopic,
       username: username ?? this.username,
       password: password ?? this.password,
       useSecure: useSecure ?? this.useSecure,

@@ -20,9 +20,19 @@ class IrrigationProvider with ChangeNotifier {
   bool _isAutoMode = true;
   bool _isSimulationActive = false;
   Timer? _simulationTimer;
+  Timer? _watchdogTimer;
 
   StreamSubscription<SensorData>? _dataSubscription;
   StreamSubscription<MqttConnectionState>? _stateSubscription;
+
+  // Stream untuk memicu Dialog Gangguan Sinyal (Hanya 1x per insiden putus koneksi)
+  final _disruptionAlertController = StreamController<String>.broadcast();
+  Stream<String> get disruptionAlertStream => _disruptionAlertController.stream;
+  bool _hasShownDisruptionAlert = false;
+  String? _watchdogDisruptionReason;
+
+  // Waktu buka aplikasi untuk deteksi awal
+  final DateTime _appStartTime = DateTime.now();
 
   // Getters
   SensorData get currentData => _currentData;
@@ -37,9 +47,17 @@ class IrrigationProvider with ChangeNotifier {
   bool get isSimulationActive => _isSimulationActive;
   bool get hasData => _currentData.hasData || _isSimulationActive;
 
+  // Status Perangkat Online (ESP32 mengirim data aktif & status LWT ONLINE)
+  bool get isDeviceOnline => _isSimulationActive ? true : _currentData.isDeviceOnline;
+  String? get disruptionReason => _currentData.isDeviceOnline
+      ? null
+      : (_mqttService.disruptionReason ?? _watchdogDisruptionReason);
+  DateTime? get lastPacketTime => _currentData.lastPacketTime;
+
   IrrigationProvider() {
     _mqttService = MqttService(config: _config);
     _initSubscriptions();
+    _startWatchdogTimer();
     _loadPreferences().then((_) {
       connectMqtt().then((success) {
         if (!success) {
@@ -51,7 +69,6 @@ class IrrigationProvider with ChangeNotifier {
         }
       });
     });
-    // Menunggu data riil masuk dari hardware prototype ESP32 (tidak memasukkan dummy ke riwayat)
   }
 
   void _initSubscriptions() {
@@ -60,8 +77,71 @@ class IrrigationProvider with ChangeNotifier {
     });
 
     _stateSubscription = _mqttService.connectionStateStream.listen((state) {
+      if (state != MqttConnectionState.connected && !_isSimulationActive) {
+        _handleBrokerDisconnection();
+      }
       notifyListeners();
     });
+  }
+
+  /// Timer periodik 5 detik untuk mendeteksi timeout data (>15 detik tidak ada paket baru)
+  void _startWatchdogTimer() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (_isSimulationActive) return;
+
+      final isMqttConnected = _mqttService.connectionState == MqttConnectionState.connected;
+
+      if (!isMqttConnected) {
+        // Cek jika app sudah buka > 10 detik dan gagal connect broker
+        final elapsedSinceStart = DateTime.now().difference(_appStartTime).inSeconds;
+        if (elapsedSinceStart > 10) {
+          _handleBrokerDisconnection();
+        }
+        return;
+      }
+
+      // Jika terhubung ke broker, periksa waktu paket sensor terakhir
+      if (_currentData.hasData && _currentData.lastPacketTime != null) {
+        final elapsed = DateTime.now().difference(_currentData.lastPacketTime!).inSeconds;
+        if (elapsed > 15) {
+          // ESP32 berhenti mengirim data > 15 detik
+          if (_currentData.isDeviceOnline) {
+            _watchdogDisruptionReason =
+                'Perangkat irigasi di lahan tidak mengirim data. Periksa sinyal Wi-Fi/hotspot atau kuota internet pada alat. (Penyiraman otomatis lokal pada alat tetap berjalan).';
+            _mqttService.setDeviceOnlineState(false, reason: _watchdogDisruptionReason);
+            _currentData = _currentData.copyWith(isDeviceOnline: false);
+            _triggerDisruptionAlert(_watchdogDisruptionReason!);
+            notifyListeners();
+          }
+        }
+      } else {
+        // Belum menerima data sama sekali sejak buka aplikasi > 12 detik
+        final elapsedSinceStart = DateTime.now().difference(_appStartTime).inSeconds;
+        if (elapsedSinceStart > 12 && !_hasShownDisruptionAlert) {
+          _watchdogDisruptionReason =
+              'Perangkat irigasi di lahan belum terhubung. Periksa daya alat prototype ESP32 dan jaringan Wi-Fi.';
+          _triggerDisruptionAlert(_watchdogDisruptionReason!);
+        }
+      }
+    });
+  }
+
+  void _handleBrokerDisconnection() {
+    final reason = 'Koneksi internet smartphone terputus dari server MQTT. Periksa jaringan seluler atau Wi-Fi Anda.';
+    _watchdogDisruptionReason = reason;
+    if (_currentData.isDeviceOnline) {
+      _currentData = _currentData.copyWith(isDeviceOnline: false);
+    }
+    _triggerDisruptionAlert(reason);
+    notifyListeners();
+  }
+
+  void _triggerDisruptionAlert(String reason) {
+    if (!_hasShownDisruptionAlert && !_isSimulationActive) {
+      _hasShownDisruptionAlert = true;
+      _disruptionAlertController.add(reason);
+    }
   }
 
   Future<void> _loadPreferences() async {
@@ -74,7 +154,6 @@ class IrrigationProvider with ChangeNotifier {
       final configJsonStr = prefs.getString('mqttConfig');
       if (configJsonStr != null) {
         final Map<String, dynamic> decoded = json.decode(configJsonStr);
-        // Migrasi: jika tersimpan konfigurasi lama non-HiveMQ Cloud atau port bukan 8883 atau kredensial kosong
         if (decoded['brokerHost'] !=
                 'adaa622b6b644c048748162b0be4ac5f.s1.eu.hivemq.cloud' ||
             decoded['username'] == null ||
@@ -113,14 +192,21 @@ class IrrigationProvider with ChangeNotifier {
   void _processIncomingSensorData(SensorData newData) {
     bool pumpState = newData.isPumpOn;
 
+    // Jika data online kembali, reset flag alert agar bisa memicu alert baru jika putus di masa mendatang
+    if (newData.isDeviceOnline) {
+      _hasShownDisruptionAlert = false;
+      _watchdogDisruptionReason = null;
+    } else if (newData.hasData && !newData.isDeviceOnline) {
+      _triggerDisruptionAlert(_mqttService.disruptionReason ??
+          'Perangkat irigasi di lahan tidak mengirim data. Periksa sinyal Wi-Fi/hotspot atau kuota internet pada alat. (Penyiraman otomatis lokal pada alat tetap berjalan).');
+    }
+
     // Evaluasi Aturan Irigasi Otomatis (Skripsi Logic) HANYA jika data riil telah diterima
     if (newData.hasData) {
       if (_isAutoMode) {
         if (newData.soilMoisture < _minThreshold) {
-          // Kelembapan < 60% : Aktifkan Pompa Air
           pumpState = true;
         } else if (newData.soilMoisture >= _maxThreshold) {
-          // Kelembapan >= 80% : Matikan Pompa Air secara otomatis
           pumpState = false;
         }
       } else {
@@ -159,7 +245,12 @@ class IrrigationProvider with ChangeNotifier {
     if (_isSimulationActive) {
       stopSimulation();
     }
-    return await _mqttService.connect();
+    final ok = await _mqttService.connect();
+    if (ok) {
+      _hasShownDisruptionAlert = false;
+      _watchdogDisruptionReason = null;
+    }
+    return ok;
   }
 
   /// Disconnect from HiveMQ Broker
@@ -169,18 +260,38 @@ class IrrigationProvider with ChangeNotifier {
   }
 
   /// Mengirim contoh data telemetri ESP32 untuk verifikasi live connection
-  Future<bool> sendTestEsp32Telemetry(
-      {int adc = 2450, double temp = 29.0, double hum = 68.0}) async {
+  Future<bool> sendTestEsp32Telemetry({
+    int adc = 2450,
+    double temp = 29.0,
+    double hum = 68.0,
+    int s1 = 2500,
+    int s2 = 2450,
+    int s3 = 2400,
+  }) async {
     return await _mqttService.publishTestEsp32Data(
-        adc: adc, temp: temp, hum: hum);
+      adc: adc,
+      temp: temp,
+      hum: hum,
+      s1: s1,
+      s2: s2,
+      s3: s3,
+    );
   }
 
   /// Toggle manual saklar pompa air (ON / OFF)
   Future<bool> togglePumpState(bool turnOn) async {
-    // Proteksi: Jika kelembapan tanah sudah > 80%, kunci pompa ke OFF
+    // Pengaman: Jika perangkat offline, tolak kontrol manual
+    if (!isDeviceOnline && !_isSimulationActive) {
+      if (kDebugMode) {
+        print('Pengaman: Kontrol manual ditolak karena perangkat offline / sinyal terputus.');
+      }
+      return false;
+    }
+
+    // Proteksi: Jika kelembapan tanah sudah >= 80%, kunci pompa ke OFF
     if (turnOn && _currentData.soilMoisture >= _maxThreshold) {
       if (kDebugMode) {
-        print('Proteksi Aktif: Kelembapan tanah > 80%, saklar ditolak.');
+        print('Proteksi Aktif: Kelembapan tanah >= 80%, saklar ditolak.');
       }
       return false;
     }
@@ -191,10 +302,6 @@ class IrrigationProvider with ChangeNotifier {
 
     bool published = false;
     if (_mqttService.connectionState != MqttConnectionState.connected) {
-      if (kDebugMode) {
-        print(
-            'MQTT Offline saat tombol pompa ditekan, mencoba koneksi instan...');
-      }
       final ok = await _mqttService.connect();
       if (ok) {
         published = _mqttService.publishPumpControl(turnOn);
@@ -248,18 +355,21 @@ class IrrigationProvider with ChangeNotifier {
   }
 
   /// Reset semua konfigurasi broker dan threshold ke pengaturan bawaan skripsi
-  void resetToDefaultConfig() {
+  void resetToDefault() {
     _config = MqttConfig();
     _minThreshold = 60.0;
     _maxThreshold = 80.0;
+    _isAutoMode = true;
     _mqttService.updateConfig(_config);
     notifyListeners();
     savePreferences();
     connectMqtt();
   }
 
-  /// Mode Simulasi Real-Time untuk pengujian UI tanpa hardware ESP32
-  void toggleSimulation() {
+  void resetToDefaultConfig() => resetToDefault();
+
+  /// Toggle Mode Simulasi untuk demonstrasi seminar tanpa hardware fisik
+  void toggleSimulationMode() {
     if (_isSimulationActive) {
       stopSimulation();
     } else {
@@ -267,15 +377,21 @@ class IrrigationProvider with ChangeNotifier {
     }
   }
 
+  void toggleSimulation() => toggleSimulationMode();
+
   void startSimulation() {
     if (_mqttService.connectionState == MqttConnectionState.connected) {
       _mqttService.disconnect();
     }
     _isSimulationActive = true;
 
-    final initialMoisture =
-        _currentData.hasData ? _currentData.soilMoisture : 65.0;
+    final initialMoisture = _currentData.hasData ? _currentData.soilMoisture : 65.0;
     final initialPump = _currentData.isPumpOn;
+
+    // Nilai simulasi 3 sensor tanah
+    final s1Adc = 2400;
+    final s2Adc = 2200;
+    final s3Adc = 2000;
 
     _currentData = SensorData(
       soilMoisture: initialMoisture,
@@ -284,6 +400,15 @@ class IrrigationProvider with ChangeNotifier {
       isPumpOn: initialPump,
       isAutoMode: _isAutoMode,
       hasData: true,
+      hasSoilData: true,
+      soil1Adc: s1Adc,
+      soil2Adc: s2Adc,
+      soil3Adc: s3Adc,
+      soil1Percent: SensorData.adcToPercent(s1Adc),
+      soil2Percent: SensorData.adcToPercent(s2Adc),
+      soil3Percent: SensorData.adcToPercent(s3Adc),
+      isDeviceOnline: true,
+      lastPacketTime: DateTime.now(),
       pumpStatusText: initialPump ? 'MENYIRAM (SIMULASI)' : 'STANDBY',
     );
     _addHistoryPoint(_currentData);
@@ -306,6 +431,11 @@ class IrrigationProvider with ChangeNotifier {
       double temp = 28.0 + (DateTime.now().second % 5) * 0.4;
       double hum = 70.0 + (DateTime.now().second % 7) * 0.8;
 
+      // Variasikan sedikit 3 titik sensor
+      int simS1 = (3600 - (currentMoisture / 100.0 * 2400) + 60).round().clamp(1200, 3600);
+      int simS2 = (3600 - (currentMoisture / 100.0 * 2400)).round().clamp(1200, 3600);
+      int simS3 = (3600 - (currentMoisture / 100.0 * 2400) - 60).round().clamp(1200, 3600);
+
       final simulatedData = SensorData(
         soilMoisture: double.parse(currentMoisture.toStringAsFixed(1)),
         temperature: double.parse(temp.toStringAsFixed(1)),
@@ -313,6 +443,15 @@ class IrrigationProvider with ChangeNotifier {
         isPumpOn: currentPump,
         isAutoMode: _isAutoMode,
         hasData: true,
+        hasSoilData: true,
+        soil1Adc: simS1,
+        soil2Adc: simS2,
+        soil3Adc: simS3,
+        soil1Percent: SensorData.adcToPercent(simS1),
+        soil2Percent: SensorData.adcToPercent(simS2),
+        soil3Percent: SensorData.adcToPercent(simS3),
+        isDeviceOnline: true,
+        lastPacketTime: DateTime.now(),
         pumpStatusText: currentPump ? 'MENYIRAM (SIMULASI)' : 'STANDBY',
       );
 
@@ -333,6 +472,8 @@ class IrrigationProvider with ChangeNotifier {
     _dataSubscription?.cancel();
     _stateSubscription?.cancel();
     _simulationTimer?.cancel();
+    _watchdogTimer?.cancel();
+    _disruptionAlertController.close();
     _mqttService.dispose();
     super.dispose();
   }

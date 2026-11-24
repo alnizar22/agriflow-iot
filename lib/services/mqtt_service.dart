@@ -35,6 +35,20 @@ class MqttService {
   int? _lastRawSoilAdc;
   String? _lastPumpStatusText;
 
+  // State Pasca-Semhas: 3 Sensor & Deteksi Koneksi
+  int? _soil1Adc;
+  int? _soil2Adc;
+  int? _soil3Adc;
+  double? _soil1Percent;
+  double? _soil2Percent;
+  double? _soil3Percent;
+  bool _isDeviceOnline = false;
+  bool get isDeviceOnline => _isDeviceOnline;
+  String? _disruptionReason;
+  String? get disruptionReason => _disruptionReason;
+  DateTime? _lastPacketTime;
+  DateTime? get lastPacketTime => _lastPacketTime;
+
   MqttService({MqttConfig? config}) : _config = config ?? MqttConfig();
 
   void updateConfig(MqttConfig newConfig) {
@@ -44,13 +58,20 @@ class MqttService {
     }
   }
 
+  void setDeviceOnlineState(bool online, {String? reason}) {
+    _isDeviceOnline = online;
+    _disruptionReason = online ? null : reason;
+    _emitCurrentData();
+  }
+
   Future<bool> connect() async {
     _updateState(MqttConnectionState.connecting);
     _lastError = '';
 
-    // Pastikan client ID selalu unik per koneksi untuk menghindari tabrakan sesi di broker HiveMQ Cloud Serverless
-    final String baseId = _config.clientId.isEmpty ? 'FlutterApp_Nizar' : _config.clientId;
-    final activeClientId = '${baseId}_${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}';
+    // Client ID dinamis untuk menghindari tabrakan sesi di broker HiveMQ
+    final String activeClientId = _config.clientId.isNotEmpty
+        ? _config.clientId
+        : 'FlutterApp_Nizar_${DateTime.now().millisecondsSinceEpoch % 100000}';
 
     _client = MqttServerClient.withPort(
       _config.brokerHost,
@@ -94,6 +115,8 @@ class MqttService {
       );
     } catch (e) {
       _lastError = e.toString();
+      _isDeviceOnline = false;
+      _disruptionReason = 'Koneksi internet HP / MQTT Broker terputus';
       if (kDebugMode) {
         print('MQTT Exception: $e');
       }
@@ -109,17 +132,21 @@ class MqttService {
       return true;
     } else {
       _lastError = 'Connection failed: ${_client!.connectionStatus?.returnCode}';
+      _isDeviceOnline = false;
+      _disruptionReason = 'Koneksi internet HP / MQTT Broker terputus';
       _client!.disconnect();
       _updateState(MqttConnectionState.error);
       return false;
     }
   }
 
-  /// Subscribe ke topik telemetri ESP32 (soil, temp, hum, pompa, manual)
+  /// Subscribe ke topik telemetri ESP32 (soil, temp, hum, pompa, manual, status, soil_detail)
   void _subscribeToTelemetry() {
     if (_client != null && _connectionState == MqttConnectionState.connected) {
       final topicsToSubscribe = <String>{
         'skripsi/nizar/#', // Wildcard: Menangkap seluruh subtopik ESP32 tanpa ada yang terlewat
+        'skripsi/nizar/status',
+        'skripsi/nizar/soil_detail',
         'skripsi/nizar/soil',
         'skripsi/nizar/temp',
         'skripsi/nizar/hum',
@@ -127,6 +154,8 @@ class MqttService {
         'skripsi/nizar/manual',
         _config.telemetryTopic,
         _config.controlTopic,
+        _config.statusTopic,
+        _config.soilDetailTopic,
       };
 
       for (final topic in topicsToSubscribe) {
@@ -153,7 +182,68 @@ class MqttService {
         print('MQTT Received Payload on topic [$topic]: $payload');
       }
 
-      // 1. Coba decode JSON terlebih dahulu jika data berupa JSON Map
+      final cleanPayload = payload.trim();
+      final lowerTopic = topic.toLowerCase();
+
+      // 1. Deteksi Topik Status LWT ESP32 (skripsi/nizar/status)
+      if (lowerTopic.endsWith('status') || lowerTopic == _config.statusTopic.toLowerCase()) {
+        final upper = cleanPayload.toUpperCase();
+        if (upper == 'ONLINE') {
+          _isDeviceOnline = true;
+          _disruptionReason = null;
+          _lastPacketTime = DateTime.now();
+        } else if (upper == 'OFFLINE') {
+          _isDeviceOnline = false;
+          _disruptionReason = 'Sinyal perangkat ESP32 terputus (Wi-Fi/kuota alat bermasalah)';
+        }
+        _emitCurrentData();
+        return;
+      }
+
+      // 2. Deteksi Topik Detail 3 Sensor (skripsi/nizar/soil_detail)
+      if (lowerTopic.endsWith('soil_detail') || lowerTopic == _config.soilDetailTopic.toLowerCase()) {
+        try {
+          final dynamic decoded = json.decode(cleanPayload);
+          if (decoded is Map<String, dynamic>) {
+            final s1 = (decoded['s1'] as num?)?.toInt();
+            final s2 = (decoded['s2'] as num?)?.toInt();
+            final s3 = (decoded['s3'] as num?)?.toInt();
+            final avg = (decoded['avg'] as num?)?.toInt();
+
+            if (s1 != null) {
+              _soil1Adc = s1;
+              _soil1Percent = SensorData.adcToPercent(s1);
+            }
+            if (s2 != null) {
+              _soil2Adc = s2;
+              _soil2Percent = SensorData.adcToPercent(s2);
+            }
+            if (s3 != null) {
+              _soil3Adc = s3;
+              _soil3Percent = SensorData.adcToPercent(s3);
+            }
+            if (avg != null) {
+              _lastRawSoilAdc = avg;
+              _lastSoilMoisture = SensorData.adcToPercent(avg);
+            } else if (s1 != null && s2 != null && s3 != null) {
+              _lastRawSoilAdc = ((s1 + s2 + s3) / 3).round();
+              _lastSoilMoisture = SensorData.adcToPercent(_lastRawSoilAdc!);
+            }
+
+            _hasReceivedHardwareData = true;
+            _hasReceivedSoilData = true;
+            _lastPacketTime = DateTime.now();
+            _isDeviceOnline = true;
+            _disruptionReason = null;
+            _emitCurrentData();
+            return;
+          }
+        } catch (e) {
+          if (kDebugMode) print('Error parsing soil_detail JSON: $e');
+        }
+      }
+
+      // 3. Coba decode JSON umum jika ada
       try {
         final dynamic decoded = json.decode(payload);
         if (decoded is Map<String, dynamic>) {
@@ -165,33 +255,39 @@ class MqttService {
           _lastPumpOn = sensorData.isPumpOn;
           _lastRawSoilAdc = sensorData.rawSoilAdc;
           _lastPumpStatusText = sensorData.pumpStatusText;
-          _sensorDataController.add(sensorData);
+          _soil1Adc = sensorData.soil1Adc ?? _soil1Adc;
+          _soil2Adc = sensorData.soil2Adc ?? _soil2Adc;
+          _soil3Adc = sensorData.soil3Adc ?? _soil3Adc;
+          _soil1Percent = sensorData.soil1Percent ?? _soil1Percent;
+          _soil2Percent = sensorData.soil2Percent ?? _soil2Percent;
+          _soil3Percent = sensorData.soil3Percent ?? _soil3Percent;
+          _lastPacketTime = DateTime.now();
+          _isDeviceOnline = true;
+          _disruptionReason = null;
+          _sensorDataController.add(sensorData.copyWith(
+            isDeviceOnline: true,
+            lastPacketTime: _lastPacketTime,
+          ));
           return;
         }
       } catch (_) {
-        // Bukan JSON, parsing nilai mentah di bawah
+        // Bukan JSON umum, parsing nilai mentah di bawah
       }
 
-      // 2. Parser data mentah ESP32 sesuai topik individual
-      final cleanPayload = payload.trim();
+      // 4. Parser data mentah ESP32 sesuai topik individual
       final numVal = double.tryParse(cleanPayload);
-      final lowerTopic = topic.toLowerCase();
 
       if (lowerTopic.endsWith('soil') || lowerTopic.contains('soil') || lowerTopic == _config.telemetryTopic.toLowerCase()) {
         if (numVal != null) {
           _hasReceivedHardwareData = true;
           _hasReceivedSoilData = true;
+          _lastPacketTime = DateTime.now();
+          _isDeviceOnline = true;
+          _disruptionReason = null;
+
           if (numVal > 100.0) {
-            // ADC ESP32 12-bit (0 - 4095)
-            // Di Arduino: avgSoil = (analogRead(32)+analogRead(33)+analogRead(34))/3
-            // Di Arduino: avgSoil > 2500 adalah KERING, avgSoil <= 2500 adalah IDEAL
             _lastRawSoilAdc = numVal.toInt();
-            // Pemetaan ADC ke persentase 0-100%:
-            // 3600 ADC (kering di udara) -> ~0-10%
-            // 2500 ADC (threshold batas kering skripsi) -> ~55%
-            // 1200 ADC (basah air) -> ~100%
-            double percent = ((3600.0 - numVal) / (3600.0 - 1200.0)) * 100.0;
-            _lastSoilMoisture = double.parse(percent.clamp(0.0, 100.0).toStringAsFixed(1));
+            _lastSoilMoisture = SensorData.adcToPercent(numVal);
           } else {
             _lastSoilMoisture = numVal;
           }
@@ -200,16 +296,23 @@ class MqttService {
         if (numVal != null) {
           _hasReceivedHardwareData = true;
           _lastTemperature = numVal;
+          _lastPacketTime = DateTime.now();
+          _isDeviceOnline = true;
+          _disruptionReason = null;
         }
       } else if (lowerTopic.endsWith('hum') || lowerTopic.contains('hum') || lowerTopic.contains('kelembapan_udara')) {
         if (numVal != null) {
           _hasReceivedHardwareData = true;
           _lastHumidity = numVal;
+          _lastPacketTime = DateTime.now();
+          _isDeviceOnline = true;
+          _disruptionReason = null;
         }
       } else if (lowerTopic.endsWith('pompa') || lowerTopic.contains('pompa')) {
         _hasReceivedHardwareData = true;
-        // ESP32 mem-publish status ke skripsi/nizar/pompa:
-        // "MENYIRAM (AUTO)", "SIRAM MANUAL (5 DETIK)", "JEDA RESAP", "STANDBY"
+        _lastPacketTime = DateTime.now();
+        _isDeviceOnline = true;
+        _disruptionReason = null;
         _lastPumpStatusText = cleanPayload;
         final upper = cleanPayload.toUpperCase();
         if (upper.contains('MENYIRAM') || upper.contains('SIRAM') || upper == '1' || upper == 'ON') {
@@ -226,21 +329,32 @@ class MqttService {
         }
       }
 
-      // Gabungkan telemetri mentah menjadi SensorData utuh
-      final mergedData = SensorData(
-        soilMoisture: _lastSoilMoisture,
-        temperature: _lastTemperature,
-        humidity: _lastHumidity,
-        isPumpOn: _lastPumpOn,
-        rawSoilAdc: _lastRawSoilAdc,
-        pumpStatusText: _lastPumpStatusText,
-        hasData: _hasReceivedHardwareData,
-        hasSoilData: _hasReceivedSoilData,
-        timestamp: DateTime.now(),
-      );
-
-      _sensorDataController.add(mergedData);
+      _emitCurrentData();
     });
+  }
+
+  void _emitCurrentData() {
+    final mergedData = SensorData(
+      soilMoisture: _lastSoilMoisture,
+      temperature: _lastTemperature,
+      humidity: _lastHumidity,
+      isPumpOn: _lastPumpOn,
+      rawSoilAdc: _lastRawSoilAdc,
+      pumpStatusText: _lastPumpStatusText,
+      hasData: _hasReceivedHardwareData,
+      hasSoilData: _hasReceivedSoilData,
+      soil1Adc: _soil1Adc,
+      soil2Adc: _soil2Adc,
+      soil3Adc: _soil3Adc,
+      soil1Percent: _soil1Percent,
+      soil2Percent: _soil2Percent,
+      soil3Percent: _soil3Percent,
+      isDeviceOnline: _isDeviceOnline,
+      lastPacketTime: _lastPacketTime,
+      timestamp: DateTime.now(),
+    );
+
+    _sensorDataController.add(mergedData);
   }
 
   /// Mengirim sinyal kendali pompa ke ESP32 pada topik skripsi/nizar/manual
@@ -255,7 +369,6 @@ class MqttService {
 
     _lastPumpOn = turnOn;
     final builder = mqtt.MqttClientPayloadBuilder();
-    // Di C++ ESP32: if (String(topic) == "skripsi/nizar/manual") { if (msg == "SIRAM") { ... } }
     final commandPayload = turnOn ? 'SIRAM' : '0';
     builder.addString(commandPayload);
 
@@ -278,16 +391,33 @@ class MqttService {
   }
 
   /// Mengirim contoh data telemetri persis seperti yang di-publish oleh ESP32
-  /// Untuk memverifikasi penerimaan di HiveMQ Cloud WebClient dan aplikasi
-  Future<bool> publishTestEsp32Data({int adc = 2450, double temp = 29.0, double hum = 68.0}) async {
+  Future<bool> publishTestEsp32Data({
+    int adc = 2450,
+    double temp = 29.0,
+    double hum = 68.0,
+    int s1 = 2500,
+    int s2 = 2450,
+    int s3 = 2400,
+  }) async {
     if (_client == null || _connectionState != MqttConnectionState.connected) {
       return false;
     }
 
     try {
+      // 1. Publish status ONLINE
+      final bStatus = mqtt.MqttClientPayloadBuilder()..addString('ONLINE');
+      _client!.publishMessage('skripsi/nizar/status', mqtt.MqttQos.atLeastOnce, bStatus.payload!);
+
+      // 2. Publish average soil ADC
       final bSoil = mqtt.MqttClientPayloadBuilder()..addString(adc.toString());
       _client!.publishMessage('skripsi/nizar/soil', mqtt.MqttQos.atLeastOnce, bSoil.payload!);
 
+      // 3. Publish soil detail JSON
+      final jsonDetail = '{"s1":$s1,"s2":$s2,"s3":$s3,"avg":$adc}';
+      final bDetail = mqtt.MqttClientPayloadBuilder()..addString(jsonDetail);
+      _client!.publishMessage('skripsi/nizar/soil_detail', mqtt.MqttQos.atLeastOnce, bDetail.payload!);
+
+      // 4. Publish temp & hum
       final bTemp = mqtt.MqttClientPayloadBuilder()..addString(temp.toString());
       _client!.publishMessage('skripsi/nizar/temp', mqtt.MqttQos.atLeastOnce, bTemp.payload!);
 
@@ -308,6 +438,8 @@ class MqttService {
     if (_client != null) {
       _client!.disconnect();
     }
+    _isDeviceOnline = false;
+    _disruptionReason = 'Koneksi internet HP / MQTT Broker terputus';
     _updateState(MqttConnectionState.disconnected);
   }
 
@@ -322,9 +454,12 @@ class MqttService {
     if (kDebugMode) {
       print('MQTT Client Disconnected');
     }
+    _isDeviceOnline = false;
+    _disruptionReason = 'Koneksi internet HP / MQTT Broker terputus';
     if (_connectionState != MqttConnectionState.error) {
       _updateState(MqttConnectionState.disconnected);
     }
+    _emitCurrentData();
   }
 
   void _onSubscribed(String topic) {

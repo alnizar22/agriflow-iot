@@ -59,7 +59,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final provider = Provider.of<IrrigationProvider>(context, listen: false);
     final portVal = int.tryParse(_portController.text.trim()) ?? 8883;
 
-    final newConfig = MqttConfig(
+    final newConfig = provider.config.copyWith(
       brokerHost: _hostController.text.trim(),
       port: portVal,
       clientId: _clientIdController.text.trim(),

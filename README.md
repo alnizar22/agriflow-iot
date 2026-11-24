@@ -62,17 +62,19 @@ flowchart LR
     end
 
     subgraph Mobile ["Mobile User"]
-        BROKER -->|Sub: skripsi//#| APP["Aplikasi Flutter AGRIFLOW"]
-        APP -->|Pub: skripsi/manual| BROKER
+        BROKER -->|Sub: skripsi/nizar/#| APP["Aplikasi Flutter AGRIFLOW"]
+        APP -->|Pub: skripsi/nizar/manual| BROKER
     end
 ```
 
 ### Pemetaan Topik MQTT:
-1. **`skripsi/soil`** (Inbound): Menerima nilai ADC rata-rata 3 sensor kelembapan tanah kapasitif (0–4095) yang dikalibrasi secara matematis ke persentase 0–100%.
-2. **`skripsi/temp`** (Inbound): Menerima suhu udara (°C) dari sensor DHT11.
-3. **`skripsi/hum`** (Inbound): Menerima kelembapan relatif udara (%) dari sensor DHT11.
-4. **`skripsi/pompa`** (Inbound): Menerima status relai riil hardware (`MENYIRAM (AUTO)`, `SIRAM MANUAL (5 DETIK)`, `JEDA RESAP`, `STANDBY`).
-5. **`skripsi/manual`** (Outbound): Topik pengiriman perintah tombol dari aplikasi (`"SIRAM"` untuk aktivasi, `"0"` untuk mematikan).
+1. **`skripsi/nizar/status`** (Inbound): Menerima status koneksi LWT (*Last Will and Testament*) ESP32 (`ONLINE` atau `OFFLINE`) secara otomatis jika sinyal mikrokontroler putus mendadak.
+2. **`skripsi/nizar/soil_detail`** (Inbound): Menerima payload JSON rincian 3 sensor kelembapan tanah di titik berbeda (`{"s1":2400,"s2":1800,"s3":1200,"avg":1800}`) untuk monitoring validasi media tanah.
+3. **`skripsi/nizar/soil`** (Inbound): Menerima nilai ADC rata-rata 3 sensor kelembapan tanah kapasitif (0–4095) yang dikalibrasi secara matematis ke persentase 0–100%.
+4. **`skripsi/nizar/temp`** (Inbound): Menerima suhu udara (°C) dari sensor DHT11.
+5. **`skripsi/nizar/hum`** (Inbound): Menerima kelembapan relatif udara (%) dari sensor DHT11.
+6. **`skripsi/nizar/pompa`** (Inbound): Menerima status relai riil hardware (`MENYIRAM (AUTO)`, `SIRAM MANUAL (5 DETIK)`, `JEDA RESAP`, `STANDBY`).
+7. **`skripsi/nizar/manual`** (Outbound): Topik pengiriman perintah tombol dari aplikasi (`"SIRAM"` untuk aktivasi, `"0"` untuk mematikan).
 
 ---
 

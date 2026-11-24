@@ -62,7 +62,10 @@ class RiwayatScreen extends StatelessWidget {
                 if (history.isEmpty)
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 24,
+                    ),
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
                       color: Colors.white,
@@ -78,18 +81,29 @@ class RiwayatScreen extends StatelessWidget {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: const [
-                        Icon(Icons.info_outline_rounded, color: Color(0xFF94A3B8), size: 24),
+                        Icon(
+                          Icons.info_outline_rounded,
+                          color: Color(0xFF94A3B8),
+                          size: 24,
+                        ),
                         SizedBox(height: 8),
                         Text(
                           'Belum ada data riwayat tersimpan',
                           textAlign: TextAlign.center,
-                          style: TextStyle(color: Color(0xFF475569), fontWeight: FontWeight.bold, fontSize: 13),
+                          style: TextStyle(
+                            color: Color(0xFF475569),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
                         ),
                         SizedBox(height: 2),
                         Text(
                           'Nyalakan prototype ESP32 untuk mulai mencatat telemetri',
                           textAlign: TextAlign.center,
-                          style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+                          style: TextStyle(
+                            color: Color(0xFF94A3B8),
+                            fontSize: 11,
+                          ),
                         ),
                       ],
                     ),
@@ -104,13 +118,16 @@ class RiwayatScreen extends StatelessWidget {
                     itemBuilder: (context, index) {
                       // Order newest first
                       final item = history[history.length - 1 - index];
-                      final timeStr =
-                          DateFormat('HH:mm:ss').format(item.timestamp);
+                      final timeStr = DateFormat(
+                        'HH:mm:ss',
+                      ).format(item.timestamp);
                       final isDry = item.soilMoisture < provider.minThreshold;
 
                       return Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 12),
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(16),
@@ -162,8 +179,9 @@ class RiwayatScreen extends StatelessWidget {
                                     Text(
                                       'Suhu: ${item.temperature}°C | Udara: ${item.humidity}%',
                                       style: const TextStyle(
-                                          fontSize: 11,
-                                          color: Color(0xFF64748B)),
+                                        fontSize: 11,
+                                        color: Color(0xFF64748B),
+                                      ),
                                     ),
                                   ],
                                 ),

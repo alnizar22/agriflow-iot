@@ -22,6 +22,10 @@ class KontrolScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Banner Gangguan Sinyal jika offline (Revisi Pasca-Semhas)
+                if (!provider.isDeviceOnline && !provider.isSimulationActive)
+                  _buildControlSignalBanner(context, provider),
+
                 // Subheader Status Bar (Mockup 2)
                 _buildSystemSubheader(provider),
 
@@ -161,16 +165,53 @@ class KontrolScreen extends StatelessWidget {
     );
   }
 
+  Widget _buildControlSignalBanner(BuildContext context, IrrigationProvider provider) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF2F2),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFFECACA)),
+      ),
+      child: Row(
+        children: const [
+          Icon(Icons.warning_amber_rounded, color: Color(0xFFDC2626), size: 18),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Sinyal Terputus: Kontrol manual dinonaktifkan demi keamanan lahan.',
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFFB91C1C),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSystemSubheader(IrrigationProvider provider) {
     final hasData = provider.hasData;
+    final isOnline = provider.isDeviceOnline;
     final isConnected = provider.connectionState == MqttConnectionState.connected;
 
-    final statusTitle = hasData ? 'SISTEM SIAGA' : 'MENUNGGU HARDWARE';
-    final statusDesc = hasData
+    final statusTitle = isOnline
+        ? 'SISTEM SIAGA'
+        : (hasData ? 'SINYAL TERPUTUS' : 'MENUNGGU HARDWARE');
+    final statusDesc = isOnline
         ? 'Hardware pompa terhubung via IoT Gateway'
-        : 'Silakan nyalakan daya prototype ESP32';
-    final statusColor = hasData ? const Color(0xFF047857) : Colors.amber.shade700;
-    final signalText = isConnected ? (hasData ? '98% Stabil' : 'Broker Siap') : 'Offline';
+        : (hasData
+            ? 'Data telemetri terhenti (cek daya/sinyal ESP32)'
+            : 'Silakan nyalakan daya prototype ESP32');
+    final statusColor = isOnline
+        ? const Color(0xFF047857)
+        : (hasData ? Colors.redAccent : Colors.amber.shade700);
+    final signalText = isOnline
+        ? '98% Stabil'
+        : (isConnected ? 'Broker Siap' : 'Offline');
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -215,9 +256,9 @@ class KontrolScreen extends StatelessWidget {
           child: Row(
             children: [
               Icon(
-                isConnected ? Icons.wifi_rounded : Icons.wifi_off_rounded,
+                isOnline ? Icons.wifi_rounded : Icons.wifi_off_rounded,
                 size: 14,
-                color: isConnected ? const Color(0xFF0288D1) : Colors.redAccent,
+                color: isOnline ? const Color(0xFF0288D1) : Colors.redAccent,
               ),
               const SizedBox(width: 4),
               Text(
@@ -225,7 +266,7 @@ class KontrolScreen extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.bold,
-                  color: isConnected ? const Color(0xFF0288D1) : Colors.redAccent,
+                  color: isOnline ? const Color(0xFF0288D1) : Colors.redAccent,
                 ),
               ),
             ],
@@ -402,89 +443,136 @@ class KontrolScreen extends StatelessWidget {
   }
 
   Widget _buildBigCircularPumpButton(BuildContext context, IrrigationProvider provider, bool isPumpOn) {
-    return Center(
-      child: GestureDetector(
-        onTap: () async {
-          // Check if moisture >= 80% (hanya jika data riil sensor telah masuk)
-          if (provider.hasData && !isPumpOn && provider.currentData.soilMoisture >= provider.maxThreshold) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Proteksi Saturation: Kelembapan tanah > 80%, pompa ditolak.'),
-                backgroundColor: Colors.orange,
+    final isOnline = provider.isDeviceOnline;
+
+    Color buttonColor;
+    if (!isOnline) {
+      buttonColor = const Color(0xFF94A3B8); // Abu-abu saat offline
+    } else if (isPumpOn) {
+      buttonColor = const Color(0xFFDC2626); // Merah saat menyiram
+    } else {
+      buttonColor = const Color(0xFF047857); // Deep Green siaga
+    }
+
+    return Column(
+      children: [
+        Center(
+          child: GestureDetector(
+            onTap: () async {
+              if (!isOnline) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Kontrol manual nonaktif saat sinyal terputus. Pastikan ESP32 online.'),
+                    backgroundColor: Colors.redAccent,
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+                return;
+              }
+
+              // Check if moisture >= 80% (hanya jika data riil sensor telah masuk)
+              if (provider.hasData && !isPumpOn && provider.currentData.soilMoisture >= provider.maxThreshold) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Proteksi Saturation: Kelembapan tanah > 80%, pompa ditolak.'),
+                    backgroundColor: Colors.orange,
+                  ),
+                );
+                return;
+              }
+              final turningOn = !isPumpOn;
+              final ok = await provider.togglePumpState(turningOn);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      turningOn
+                          ? (ok
+                              ? "Perintah 'SIRAM' berhasil terpublish ke prototype!"
+                              : "Gagal mengirim perintah: Broker sedang offline, mencoba menyambungkan...")
+                          : (ok
+                              ? "Perintah matikan pompa berhasil terpublish!"
+                              : "Gagal mengirim perintah: Broker sedang offline."),
+                    ),
+                    backgroundColor: ok ? const Color(0xFF047857) : Colors.redAccent,
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              }
+            },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              width: 240,
+              height: 240,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: buttonColor,
+                boxShadow: [
+                  BoxShadow(
+                    color: buttonColor.withValues(alpha: 0.25),
+                    blurRadius: 30,
+                    spreadRadius: 8,
+                  ),
+                ],
               ),
-            );
-            return;
-          }
-          final turningOn = !isPumpOn;
-          final ok = await provider.togglePumpState(turningOn);
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  turningOn
-                      ? (ok
-                          ? "Perintah 'SIRAM' berhasil terpublish ke prototype!"
-                          : "Gagal mengirim perintah: Broker sedang offline, mencoba menyambungkan...")
-                      : (ok
-                          ? "Perintah matikan pompa berhasil terpublish!"
-                          : "Gagal mengirim perintah: Broker sedang offline."),
-                ),
-                backgroundColor: ok ? const Color(0xFF047857) : Colors.redAccent,
-                duration: const Duration(seconds: 2),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 60,
+                    height: 60,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      !isOnline
+                          ? Icons.wifi_off_rounded
+                          : (isPumpOn ? Icons.water_drop_rounded : Icons.power_settings_new_rounded),
+                      color: Colors.white,
+                      size: 30,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    isPumpOn ? 'Matikan Pompa Air' : 'Nyalakan Pompa Air',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    !isOnline
+                        ? 'OFFLINE / TERKUNCI'
+                        : (isPumpOn ? 'POMPA AKTIF' : 'SIAP DIGUNAKAN'),
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white.withValues(alpha: 0.8),
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ],
               ),
-            );
-          }
-        },
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          width: 240,
-          height: 240,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: isPumpOn ? const Color(0xFFDC2626) : const Color(0xFF047857), // Deep Green (Mockup 2)
-            boxShadow: [
-              BoxShadow(
-                color: (isPumpOn ? Colors.red : const Color(0xFF047857)).withValues(alpha: 0.25),
-                blurRadius: 30,
-                spreadRadius: 8,
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 60,
-                height: 60,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                isPumpOn ? 'Matikan Pompa Air' : 'Nyalakan Pompa Air',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                isPumpOn ? 'POMPA AKTIF' : 'SIAP DIGUNAKAN',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white.withValues(alpha: 0.8),
-                  letterSpacing: 1,
-                ),
-              ),
-            ],
+            ),
           ),
         ),
-      ),
+        if (!isOnline) ...[
+          const SizedBox(height: 10),
+          const Text(
+            'Kontrol manual nonaktif saat sinyal terputus',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFFDC2626),
+            ),
+          ),
+        ],
+      ],
     );
   }
 
